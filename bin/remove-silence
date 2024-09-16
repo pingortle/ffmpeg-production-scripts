@@ -90,7 +90,25 @@ mkdir -p "$output_dir"
 
 # Process silence using FFmpeg
 if [ "$mode" = "remove" ]; then
-    ffmpeg -i "$input_file" -af silenceremove=stop_periods=-1:stop_duration="${time_threshold}":stop_threshold="${volume_threshold}" "$output_file"
+    # Step 1 & 2: Detect silence and save timestamps
+    ffmpeg -i "$input_file" -af silencedetect=noise="${volume_threshold}":d="${time_threshold}" -f null - 2>&1 | grep "silence_end" | awk '{print $5 " " $8}' > silence.txt
+
+    # Step 3: Process silence.txt and generate filter complex command
+    filter_complex=$(awk '
+        BEGIN {ORS="";print "select=\'"}
+        {if(NR>1)print"+";print"not(between(t,"$1","$2"))"}
+        END {print"\',setpts=N/FRAME_RATE/TB"}
+    ' silence.txt)
+
+    audio_filter=$(awk '
+        BEGIN {ORS="";print "aselect=\'"}
+        {if(NR>1)print"+";print"not(between(t,"$1","$2"))"}
+        END {print"\',asetpts=N/SR/TB"}
+    ' silence.txt)
+
+    # Step 4: Run FFmpeg with the generated filter
+    ffmpeg -i "$input_file" -vf "$filter_complex" -af "$audio_filter" "$output_file"
+    rm silence.txt
     echo "Silence removed. Output file: $output_file"
 elif [ "$mode" = "fastforward" ]; then
     ffmpeg -i "$input_file" -af silencedetect=noise="${volume_threshold}":d="${time_threshold}" -f null - 2> silence_log.txt
