@@ -1,1 +1,70 @@
 #!/usr/bin/env bash
+
+# Function to display help message
+show_help() {
+    echo "Usage: splice [OPTIONS] FILE1 FILE2 [FILE3 ...]"
+    echo
+    echo "Splice multiple video files together using FFmpeg."
+    echo
+    echo "Options:"
+    echo "  -h, --help    Show this help message and exit"
+    echo
+    echo "The output file will be named using a composite of the input file names."
+}
+
+# Check if FFmpeg is installed
+if ! command -v ffmpeg &> /dev/null; then
+    echo "Error: FFmpeg is not installed. Please install FFmpeg to use this script."
+    exit 1
+fi
+
+# Parse command-line options
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -h|--help)
+            show_help
+            exit 0
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+# Check if at least two input files are provided
+if [ $# -lt 2 ]; then
+    echo "Error: At least two input files are required."
+    show_help
+    exit 1
+fi
+
+# Create a temporary file to store the list of input files
+input_list=$(mktemp)
+
+# Generate the output filename and populate the input list
+output_name=""
+for file in "$@"; do
+    if [ ! -f "$file" ]; then
+        echo "Error: File not found: $file"
+        rm "$input_list"
+        exit 1
+    fi
+    echo "file '$file'" >> "$input_list"
+    output_name="${output_name}${file%.*}_"
+done
+
+# Remove the trailing underscore and add the extension
+output_name="${output_name%_}.mp4"
+
+# Splice the videos using FFmpeg
+ffmpeg -f concat -safe 0 -i "$input_list" -c copy "$output_name"
+
+# Check if FFmpeg was successful
+if [ $? -eq 0 ]; then
+    echo "Video splicing complete. Output file: $output_name"
+else
+    echo "Error: Video splicing failed."
+fi
+
+# Clean up the temporary file
+rm "$input_list"
