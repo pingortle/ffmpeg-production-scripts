@@ -7,7 +7,8 @@ show_help() {
     echo "Splice multiple video files together using FFmpeg."
     echo
     echo "Options:"
-    echo "  -h, --help    Show this help message and exit"
+    echo "  -h, --help              Show this help message and exit"
+    echo "  -o, --output-dir DIR    Specify the output directory for the spliced video"
     echo
     echo "The output file will be named using a composite of the input file names."
 }
@@ -18,12 +19,24 @@ if ! command -v ffmpeg &> /dev/null; then
     exit 1
 fi
 
+# Initialize output directory variable
+output_dir=""
+
 # Parse command-line options
 while [[ $# -gt 0 ]]; do
     case $1 in
         -h|--help)
             show_help
             exit 0
+            ;;
+        -o|--output-dir)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                output_dir="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                exit 1
+            fi
             ;;
         *)
             break
@@ -36,6 +49,11 @@ if [ $# -lt 2 ]; then
     echo "Error: At least two input files are required."
     show_help
     exit 1
+fi
+
+# Create output directory if it doesn't exist
+if [[ -n "$output_dir" ]]; then
+    mkdir -p "$output_dir"
 fi
 
 # Create a temporary file to store the list of input files
@@ -57,12 +75,19 @@ done
 # Remove the trailing underscore and add the extension
 output_name="spliced_${output_name%_}.mp4"
 
+# Set the full output path
+if [[ -n "$output_dir" ]]; then
+    output_path="$output_dir/$output_name"
+else
+    output_path="$output_name"
+fi
+
 # Splice the videos using FFmpeg
-ffmpeg -f concat -safe 0 -i "$input_list" -c copy "$output_name"
+ffmpeg -f concat -safe 0 -i "$input_list" -c copy "$output_path"
 
 # Check if FFmpeg was successful
 if [ $? -eq 0 ]; then
-    echo "Video splicing complete. Output file: $output_name"
+    echo "Video splicing complete. Output file: $output_path"
 else
     echo "Error: Video splicing failed."
 fi
