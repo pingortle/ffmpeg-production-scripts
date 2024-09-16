@@ -49,7 +49,7 @@ for file in "$@"; do
         rm "$input_list"
         exit 1
     fi
-    echo "file '$file'" >> "$input_list"
+    printf "file '%s'\n" "$file" >> "$input_list"
     base_name=$(basename "$file")
     output_name="${output_name}${base_name%.*}_"
 done
