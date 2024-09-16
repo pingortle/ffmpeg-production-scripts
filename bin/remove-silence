@@ -4,7 +4,7 @@ set -e
 
 # Function to display usage information
 usage() {
-    echo "Usage: $0 [-h] [-o output_dir] [-f output_file] [-m mode] input_file"
+    echo "Usage: $0 [-h] [-o output_dir] [-f output_file] [-m mode] [-v volume] [-t time] input_file"
     echo
     echo "Process silence in a video file using FFmpeg."
     echo
@@ -13,6 +13,8 @@ usage() {
     echo "  -o output_dir   Specify the output directory (default: current directory)"
     echo "  -f output_file  Specify the full output file path (overrides -o)"
     echo "  -m mode         Specify the processing mode: 'remove' or 'fastforward' (default: remove)"
+    echo "  -v volume       Specify the volume threshold in dB (default: -50dB)"
+    echo "  -t time         Specify the time threshold in seconds (default: 1)"
     echo "  input_file      The input video file to process"
 }
 
@@ -20,8 +22,10 @@ usage() {
 output_dir="."
 output_file=""
 mode="remove"
+volume_threshold="-50dB"
+time_threshold="1"
 
-while getopts ":ho:f:m:" opt; do
+while getopts ":ho:f:m:v:t:" opt; do
     case ${opt} in
         h )
             usage
@@ -35,6 +39,12 @@ while getopts ":ho:f:m:" opt; do
             ;;
         m )
             mode="$OPTARG"
+            ;;
+        v )
+            volume_threshold="$OPTARG"
+            ;;
+        t )
+            time_threshold="$OPTARG"
             ;;
         \? )
             echo "Invalid option: -$OPTARG" 1>&2
@@ -80,10 +90,10 @@ mkdir -p "$output_dir"
 
 # Process silence using FFmpeg
 if [ "$mode" = "remove" ]; then
-    ffmpeg -i "$input_file" -af silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-50dB "$output_file"
+    ffmpeg -i "$input_file" -af silenceremove=stop_periods=-1:stop_duration="${time_threshold}":stop_threshold="${volume_threshold}" "$output_file"
     echo "Silence removed. Output file: $output_file"
 elif [ "$mode" = "fastforward" ]; then
-    ffmpeg -i "$input_file" -af silencedetect=noise=-50dB:d=1 -f null - 2> silence_log.txt
+    ffmpeg -i "$input_file" -af silencedetect=noise="${volume_threshold}":d="${time_threshold}" -f null - 2> silence_log.txt
     silences=$(awk '/silence_end/ {print $5 " " $8}' silence_log.txt | sed 's/$/,/')
     ffmpeg -i "$input_file" -filter_complex "[0:v]setpts=PTS-STARTPTS[v];[0:a]asetpts=PTS-STARTPTS[a];[v][a]select='not(between(t,${silences%,}))'" -af "atempo=1.5" "$output_file"
     rm silence_log.txt
