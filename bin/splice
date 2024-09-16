@@ -50,11 +50,12 @@ for file in "$@"; do
         exit 1
     fi
     echo "file '$file'" >> "$input_list"
-    output_name="${output_name}${file%.*}_"
+    base_name=$(basename "$file")
+    output_name="${output_name}${base_name%.*}_"
 done
 
 # Remove the trailing underscore and add the extension
-output_name="${output_name%_}.mp4"
+output_name="spliced_${output_name%_}.mp4"
 
 # Splice the videos using FFmpeg
 ffmpeg -f concat -safe 0 -i "$input_list" -c copy "$output_name"
