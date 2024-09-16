@@ -9,6 +9,7 @@ show_help() {
     echo "Options:"
     echo "  -h, --help              Show this help message and exit"
     echo "  -o, --output-dir DIR    Specify the output directory for the spliced video"
+    echo "  -f, --output-file FILE  Specify the complete output file path (overrides -o)"
     echo
     echo "The output file will be named using a composite of the input file names."
 }
@@ -19,8 +20,9 @@ if ! command -v ffmpeg &> /dev/null; then
     exit 1
 fi
 
-# Initialize output directory variable
+# Initialize output directory and output file variables
 output_dir=""
+output_file=""
 
 # Parse command-line options
 while [[ $# -gt 0 ]]; do
@@ -32,6 +34,15 @@ while [[ $# -gt 0 ]]; do
         -o|--output-dir)
             if [[ -n "$2" && "$2" != -* ]]; then
                 output_dir="$2"
+                shift 2
+            else
+                echo "Error: Argument for $1 is missing" >&2
+                exit 1
+            fi
+            ;;
+        -f|--output-file)
+            if [[ -n "$2" && "$2" != -* ]]; then
+                output_file="$2"
                 shift 2
             else
                 echo "Error: Argument for $1 is missing" >&2
@@ -51,8 +62,14 @@ if [ $# -lt 2 ]; then
     exit 1
 fi
 
-# Create output directory if it doesn't exist
-if [[ -n "$output_dir" ]]; then
+# Create output directory if it doesn't exist and output_file is not specified
+if [[ -n "$output_dir" && -z "$output_file" ]]; then
+    mkdir -p "$output_dir"
+fi
+
+# If output_file is specified, extract its directory and create it if it doesn't exist
+if [[ -n "$output_file" ]]; then
+    output_dir=$(dirname "$output_file")
     mkdir -p "$output_dir"
 fi
 
@@ -72,13 +89,16 @@ for file in "$@"; do
     output_name="${output_name}${base_name%.*}_"
 done
 
-# Remove the trailing underscore and add the extension
-output_name="spliced_${output_name%_}.mp4"
-
 # Set the full output path
-if [[ -n "$output_dir" ]]; then
+if [[ -n "$output_file" ]]; then
+    output_path="$output_file"
+elif [[ -n "$output_dir" ]]; then
+    # Remove the trailing underscore and add the extension
+    output_name="spliced_${output_name%_}.mp4"
     output_path="$output_dir/$output_name"
 else
+    # Remove the trailing underscore and add the extension
+    output_name="spliced_${output_name%_}.mp4"
     output_path="$output_name"
 fi
 
