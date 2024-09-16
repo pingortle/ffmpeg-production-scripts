@@ -1,1 +1,79 @@
 #!/usr/bin/env bash
+
+set -e
+
+# Function to display usage information
+usage() {
+    echo "Usage: $0 [-h] [-o output_dir] [-f output_file] input_file"
+    echo
+    echo "Remove silence from a video file using FFmpeg."
+    echo
+    echo "Options:"
+    echo "  -h              Display this help message and exit"
+    echo "  -o output_dir   Specify the output directory (default: current directory)"
+    echo "  -f output_file  Specify the full output file path (overrides -o)"
+    echo "  input_file      The input video file to process"
+}
+
+# Parse command-line options
+output_dir="."
+output_file=""
+
+while getopts ":ho:f:" opt; do
+    case ${opt} in
+        h )
+            usage
+            exit 0
+            ;;
+        o )
+            output_dir="$OPTARG"
+            ;;
+        f )
+            output_file="$OPTARG"
+            ;;
+        \? )
+            echo "Invalid option: -$OPTARG" 1>&2
+            usage
+            exit 1
+            ;;
+        : )
+            echo "Option -$OPTARG requires an argument" 1>&2
+            usage
+            exit 1
+            ;;
+    esac
+done
+shift $((OPTIND -1))
+
+# Check if input file is provided
+if [ $# -eq 0 ]; then
+    echo "Error: Input file is required" 1>&2
+    usage
+    exit 1
+fi
+
+input_file="$1"
+
+# Check if input file exists
+if [ ! -f "$input_file" ]; then
+    echo "Error: Input file '$input_file' does not exist" 1>&2
+    exit 1
+fi
+
+# Generate output file name if not specified
+if [ -z "$output_file" ]; then
+    input_filename=$(basename "$input_file")
+    input_name="${input_filename%.*}"
+    input_ext="${input_filename##*.}"
+    output_filename="${input_name}_silence_removed.${input_ext}"
+    output_file="${output_dir}/${output_filename}"
+fi
+
+# Ensure output directory exists
+output_dir=$(dirname "$output_file")
+mkdir -p "$output_dir"
+
+# Remove silence using FFmpeg
+ffmpeg -i "$input_file" -af silenceremove=stop_periods=-1:stop_duration=1:stop_threshold=-50dB "$output_file"
+
+echo "Silence removed. Output file: $output_file"
