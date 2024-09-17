@@ -88,33 +88,128 @@ fi
 output_dir=$(dirname "$output_file")
 mkdir -p "$output_dir"
 
+fetch_silence_periods() {
+  ffmpeg -i "$input_file" -hide_banner -vn -af silencedetect=noise="${volume_threshold}":d="${time_threshold}" -f null - 2>&1 \
+    | grep "silence_end" \
+    | awk '{print $5 " " $8}'
+}
+
+generate_silence_regions() {
+  fetch_silence_periods \
+    | ruby <(cat <<'EOF'
+      silences = $stdin.read.split("\n").map(&:split)
+      $stdout << silences.map { |silence|
+        start_time = silence.first.to_f - silence.last.to_f + 0.25
+        end_time = silence.first.to_f - 0.25
+
+        next if start_time >= end_time
+
+        "between(t,#{start_time},#{end_time})"
+      }.compact.join("+")
+EOF
+    )
+}
+
+generate_filter_complex() {
+  fetch_silence_periods \
+    | ruby <(cat <<'EOF'
+      silences = $stdin.read.split("\n").map(&:split)
+      MediaRegion = Struct.new(:start_time, :end_time) do
+        def valid?
+          start_time < end_time
+        end
+      end
+
+      class SilentRegion < MediaRegion
+        def to_complex_filter(index)
+        <<~FILTER
+          [0:v]select='between(t,#{start_time},#{end_time})',setpts=0.5*(PTS-STARTPTS)[#{video_name_for_index(index)}];
+          [0:a]aselect='between(t,#{start_time},#{end_time})',asetpts=0.5*(PTS-STARTPTS)[#{audio_name_for_index(index)}];
+        FILTER
+        end
+
+        def video_name_for_index(index)
+          "vs#{index}"
+        end
+
+        def audio_name_for_index(index)
+          "as#{index}"
+        end
+      end
+
+      class AudibleRegion < MediaRegion
+        def to_complex_filter(index)
+          <<~FILTER
+            [0:v]select='between(t,#{start_time},#{end_time})',setpts=PTS-STARTPTS[#{video_name_for_index(index)}];
+            [0:a]aselect='between(t,#{start_time},#{end_time})',asetpts=PTS-STARTPTS[#{audio_name_for_index(index)}];
+          FILTER
+        end
+
+        def video_name_for_index(index)
+          "va#{index}"
+        end
+
+        def audio_name_for_index(index)
+          "aa#{index}"
+        end
+      end
+
+      SilenceCollection = Struct.new(:silences) do
+        include Enumerable
+
+        def each
+          silences.each do |silence|
+            silence = SilentRegion.new(
+              silence.first.to_f - silence.last.to_f + 0.25,
+              silence.first.to_f - 0.25
+            )
+
+            next unless silence.valid?
+
+            yield silence
+          end
+        end
+
+        def each_region(&block)
+          reduce([]) { |regions, silence|
+            if regions.any?
+              regions << AudibleRegion.new(regions.last.end_time, silence.start_time)
+            end
+            regions << silence
+          }.each(&block)
+        end
+      end
+
+      video_region_names = []
+      audio_region_names = []
+      $stdout << SilenceCollection.new(silences).each_region.each_with_index.map { |region, i|
+        video_region_names << region.video_name_for_index(i)
+        audio_region_names << region.audio_name_for_index(i)
+        region.to_complex_filter(i)
+      }.compact.join("\n")
+      $stdout.puts "#{video_region_names.map { |name| "[#{name}]" }.join}concat=n=#{video_region_names.length}:v=1:a=0[outv];"
+      $stdout.puts "#{audio_region_names.map { |name| "[#{name}]" }.join}concat=n=#{audio_region_names.length}:v=0:a=1[outa]"
+EOF
+    )
+}
+
 # Process silence using FFmpeg
 if [ "$mode" = "remove" ]; then
-    # Step 1 & 2: Detect silence and save timestamps
-    ffmpeg -i "$input_file" -af silencedetect=noise="${volume_threshold}":d="${time_threshold}" -f null - 2>&1 | grep "silence_end" | awk '{print $5 " " $8}' > silence.txt
+    silence_periods=$(generate_silence_regions)
 
-    # Step 3: Process silence.txt and generate filter complex command
-    filter_complex=$(awk '
-        BEGIN {ORS="";print "select=\'"}
-        {if(NR>1)print"+";print"not(between(t,"$1","$2"))"}
-        END {print"\',setpts=N/FRAME_RATE/TB"}
-    ' silence.txt)
-
-    audio_filter=$(awk '
-        BEGIN {ORS="";print "aselect=\'"}
-        {if(NR>1)print"+";print"not(between(t,"$1","$2"))"}
-        END {print"\',asetpts=N/SR/TB"}
-    ' silence.txt)
-
-    # Step 4: Run FFmpeg with the generated filter
-    ffmpeg -i "$input_file" -vf "$filter_complex" -af "$audio_filter" "$output_file"
-    rm silence.txt
+    ffmpeg -i "$input_file" \
+      -vf "select='not($silence_periods)',setpts=N/FRAME_RATE/TB" \
+      -af "aselect='not($silence_periods)',asetpts=N/SR/TB" \
+      "$output_file"
     echo "Silence removed. Output file: $output_file"
 elif [ "$mode" = "fastforward" ]; then
-    ffmpeg -i "$input_file" -af silencedetect=noise="${volume_threshold}":d="${time_threshold}" -f null - 2> silence_log.txt
-    silences=$(awk '/silence_end/ {print $5 " " $8}' silence_log.txt | sed 's/$/,/')
-    ffmpeg -i "$input_file" -filter_complex "[0:v]setpts=PTS-STARTPTS[v];[0:a]asetpts=PTS-STARTPTS[a];[v][a]select='not(between(t,${silences%,}))'" -af "atempo=1.5" "$output_file"
-    rm silence_log.txt
+
+    ffmpeg -i "$input_file" \
+      -filter_complex "$(generate_filter_complex)" \
+      -map "[outv]" \
+      -map "[outa]" \
+      "$output_file"
+
     echo "Silent parts fast-forwarded. Output file: $output_file"
 else
     echo "Error: Invalid mode. Use 'remove' or 'fastforward'." >&2

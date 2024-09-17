@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+
+ffmpeg -f lavfi \
+  -i color=c=black:s=1280x720:r=30 \
+  -f lavfi \
+  -i "sine=frequency=440:duration=60" \
+  -filter_complex "[1:a]volume=enable='between(t,0,5)+between(t,10,15)+between(t,20,25)+between(t,30,35)+between(t,40,45)+between(t,50,55)':volume=0,apad" \
+  -c:v libx264 \
+  -c:a aac \
+  -t 60 \
+  "$@"
